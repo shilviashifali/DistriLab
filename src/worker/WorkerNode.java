@@ -11,6 +11,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+
 public class WorkerNode extends UnicastRemoteObject implements WorkerService {
     private static final long serialVersionUID = 1L;
 
@@ -22,6 +23,14 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
             Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean left = new AtomicBoolean(false);
     private volatile int id = -1;
+    private volatile int jac = 0;
+    private volatile int coordinatorId = -1;
+    private volatile int jobsAssigned = 0;
+
+    private final Set<String> processedElections = ConcurrentHashMap.newKeySet();
+    private final Set<String> processedCoordinators = ConcurrentHashMap.newKeySet(); 
+   
+
 
     public WorkerNode(BootstrapService bootstrap) throws RemoteException {
         super(0);
@@ -34,7 +43,117 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
     public int getId() {
         return id;
     }
+    @Override 
+    public int getJac() {
+        return jac;
+    }
+    @Override 
+    public int getCoordinatorId() {
+        return coordinatorId;
+    }
+    @Override
+    public void receiveElection(String electionId, int candidateId, int candidateJac)
+        throws RemoteException {
+    if (!processedElections.add(electionId)) {
+        this.coordinatorId = candidateId;
+        Log.info(name(), "Coordinator elected: Worker-" + candidateId);
+        processedCoordinators.add(electionId);
+        for (WorkerService neighbour : neighbours.values()) {
+            neighbour.receiveCoordinator(electionId, candidateId);
+        }
+        return;
+    }
 
+    int bestId = candidateId;
+    int bestJac = candidateJac;
+
+    if (jac > candidateJac || (jac == candidateJac && id > candidateId)) {
+        bestId = id;
+        bestJac = jac;
+    }
+    for (WorkerService neighbour : neighbours.values()) {
+        neighbour.receiveElection(electionId, bestId, bestJac);
+    }
+    }
+
+   
+
+  @Override
+   public void receiveCoordinator(String electionId, int coordinatorId)
+        throws RemoteException {
+
+    if (processedCoordinators.add(electionId)) {
+        this.coordinatorId = coordinatorId;
+
+        Log.info(name(),
+                "Coordinator elected: Worker-" + coordinatorId);
+
+        for (WorkerService neighbour : neighbours.values()) {
+            neighbour.receiveCoordinator(electionId, coordinatorId);
+    }
+    }
+    }
+   @Override
+    public void startElection() throws RemoteException {
+    Log.info(name(), "Election started");
+
+    String electionId = UUID.randomUUID().toString();
+
+    Map<Integer, WorkerService> activeWorkers = bootstrap.getActiveWorkers();
+
+    int bestId = id;
+    int bestJac = jac;
+
+    for (Map.Entry<Integer, WorkerService> entry : activeWorkers.entrySet()) {
+        WorkerService worker = entry.getValue();
+
+        try {
+            int workerId = worker.getId();
+            int workerJac = worker.getJac();
+
+            if (workerJac > bestJac ||
+                    (workerJac == bestJac && workerId > bestId)) {
+
+                bestJac = workerJac;
+                bestId = workerId;
+            }
+        } catch (RemoteException ex) {
+            Log.error(name(),
+                    "Could not contact Worker-" + entry.getKey());
+        }
+    }
+
+    this.coordinatorId = bestId;
+
+    Log.info(name(), "Coordinator elected: Worker-" + bestId);
+
+    processedCoordinators.add(electionId);
+
+    for (WorkerService worker : activeWorkers.values()) {
+        try {
+            worker.receiveCoordinator(electionId, bestId);
+        } catch (RemoteException ex) {
+            Log.error(name(), "Could not notify worker of coordinator.");
+    }
+    }
+    }
+    public void recordJobAssignment() {
+    jobsAssigned++;
+    Log.info(name(), "Job assigned. Count: " + jobsAssigned);
+
+    if (jobsAssigned >= 5) {
+        jac++;
+        jobsAssigned = 0;
+
+        Log.info(name(), "JAC increased to: " + jac);
+
+        try {
+            startElection();
+        } catch (RemoteException e) {
+            Log.error(name(), "Could not start election: " + e.getMessage());
+        }
+    }
+}
     @Override
     public boolean ping() {
         return true;
@@ -143,9 +262,21 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
 
     private void consoleLoop() {
         Scanner in = new Scanner(System.in);
-        Log.info(name(), "Commands: n = neighbours, w = all workers, q = quit");
+        Log.info(name(), "Commands: e = election, j= jobs assigned, n = neighbours, w = all workers, q = quit");
         while (in.hasNextLine()) {
             switch (in.nextLine().trim().toLowerCase()) {
+                case "j":
+                   recordJobAssignment();
+                 break;
+                case "e":
+                     try {
+                        startElection();
+                    } catch (RemoteException ex) {
+                         Log.error(name(), "Election failed: " + ex.getMessage());
+                    }
+               
+                    break;              
+              
                 case "n":
                     Log.info(name(), "Neighbours: " + neighbours.keySet());
                     break;
