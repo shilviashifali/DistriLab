@@ -67,7 +67,7 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
     int bestId = candidateId;
     int bestJac = candidateJac;
 
-    if (jac > candidateJac || (jac == candidateJac && id > candidateId)) {
+    if (jac < candidateJac || (jac == candidateJac && id > candidateId)) {
         bestId = id;
         bestJac = jac;
     }
@@ -111,7 +111,7 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
             int workerId = worker.getId();
             int workerJac = worker.getJac();
 
-            if (workerJac > bestJac ||
+            if (workerJac < bestJac ||
                     (workerJac == bestJac && workerId > bestId)) {
 
                 bestJac = workerJac;
