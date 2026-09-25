@@ -48,9 +48,7 @@ Enter the number of workers (3–10). The script starts the Bootstrap Node, the 
 
 3\. Each client:
 
-&#x20;  `java -cp dist\\DistriLab.jar client.ClientApp`
-
-
+java -cp dist\DistriLab.jar client.JobClientGUI
 
 Defaults: `localhost`, port `1099`.
 
@@ -70,6 +68,19 @@ Replace `localhost` with the Bootstrap computer's IP address, and pass each comp
 \- `w` – show all active workers
 \- `q` – leave the network
 
+## Distributed Jobs and Client
+
+The system supports three distributed job types:
+
+- **MAX** – finds the maximum value from a list of integers.
+- **PRIMESUM** – calculates the sum of prime numbers within a given range.
+- **PRIMECOUNT** – counts the number of prime numbers in a list of integers.
+
+### Starting the Client GUI
+
+After starting the Bootstrap Node and at least one Worker Node, start the client GUI in a separate Command Prompt:
+
+java -cp dist\DistriLab.jar client.JobClientGUI
 
 ## Leader Election and JAC
 
