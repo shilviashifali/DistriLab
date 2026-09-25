@@ -63,10 +63,10 @@ Replace `localhost` with the Bootstrap computer's IP address, and pass each comp
 
 
 \## Worker console commands
+
 \- `e` – manually trigger a leader election
 \- `j` – simulate a job assignment for JAC testing
 \- `n` – show neighbours
-\- `n` - show neighbours
 \- `w` – show all active workers
 \- `q` – leave the network
 
