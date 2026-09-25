@@ -12,5 +12,10 @@ public interface WorkerService extends Remote {
     Set<Integer> getNeighbourIds() throws RemoteException;
 
     // Person 2: election / coordinator methods go here
+    int getJac() throws RemoteException;
+    int getCoordinatorId() throws RemoteException;
+    void receiveElection(String electionId, int candidateId, int candidateJac) throws RemoteException;
+    void receiveCoordinator(String electionId, int coordinatorId) throws RemoteException;
+    void startElection() throws RemoteException;
     // Person 3: job execution methods go here
 }

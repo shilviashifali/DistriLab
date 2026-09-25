@@ -63,10 +63,27 @@ Replace `localhost` with the Bootstrap computer's IP address, and pass each comp
 
 
 \## Worker console commands
-
+\- `e` – manually trigger a leader election
+\- `j` – simulate a job assignment for JAC testing
 \- `n` – show neighbours
-
+\- `n` - show neighbours
 \- `w` – show all active workers
-
 \- `q` – leave the network
 
+
+## Leader Election and JAC
+
+//Workers use a leader election mechanism to select a coordinator.
+
+- The worker with the highest JAC (Job Assignment Count) is selected as coordinator.
+- If workers have the same JAC, the worker with the higher Worker ID is selected.
+- An election can be manually triggered using the `e` command.
+- The `j` command simulates a job assignment for testing.
+- After 5 job assignments, the worker's JAC increases by 1 and a new election is automatically triggered.
+- The elected coordinator is announced to the active workers so that all workers maintain the same coordinator.
+
+## Example
+
+If Workers 1, 2 and 3 all have JAC 0, Worker 3 is elected because it has the highest Worker ID.
+
+If Worker 1 then receives 5 job assignments, its JAC increases to 1. A new election is triggered and Worker 1 becomes the coordinator because it now has the highest JAC.
