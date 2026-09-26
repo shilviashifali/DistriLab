@@ -11,5 +11,5 @@ for /L %%i in (1,1,%N%) do (
 )
 
 timeout /t 3 >nul
-start "Client 1" cmd /k java -cp %CP% client.ClientApp
-start "Client 2" cmd /k java -cp %CP% client.ClientApp
+start "Client 1" cmd /k java -cp %CP% client.JobClientGUI
+start "Client 2" cmd /k java -cp %CP% client.JobClientGUI
