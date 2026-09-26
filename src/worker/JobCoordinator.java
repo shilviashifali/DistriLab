@@ -1,5 +1,6 @@
 package worker;
 
+import common.Config;
 import common.Job;
 import common.JobResult;
 import common.Log;
@@ -16,16 +17,18 @@ import java.util.concurrent.Future;
 
 /**
  * Coordinator-side job handling: splits a job across all active workers,
- * sends the parts in parallel, and combines the partial results. Works
- * for every job type through the polymorphic Job interface.
+ * sends the parts in parallel, and combines the partial results.
+ * Works for every job type through the polymorphic Job interface.
  */
 public class JobCoordinator {
 
     private final WorkerNode node;
-    private final ExecutorService dispatchPool = Executors.newFixedThreadPool(10);
+    private final ElectionManager election;
+    private final ExecutorService dispatchPool = Executors.newFixedThreadPool(Config.DISPATCH_THREADS);
 
-    public JobCoordinator(WorkerNode node) {
+    public JobCoordinator(WorkerNode node, ElectionManager election) {
         this.node = node;
+        this.election = election;
     }
 
     public JobResult submit(Job<?> job) throws RemoteException {
@@ -33,36 +36,34 @@ public class JobCoordinator {
     }
 
     private <R extends Serializable> JobResult process(Job<R> job) throws RemoteException {
-        if (node.getId() != node.getCoordinatorId()) {
-            throw new RemoteException("Worker-" + node.getId() + " is not the coordinator "
-                    + "(current coordinator: Worker-" + node.getCoordinatorId() + ")");
-        }
-
-        node.recordJobAssignment(); // counts toward this term's 5-job limit
-        Log.info(node.displayName(), "Received job: " + job.describe());
-
+        int jobNo = election.startTermJob(); // throws if not coordinator or term is over
+        Log.info(node.displayName(), "Job " + jobNo + "/" + Config.JOBS_PER_TERM
+                + " this term: " + job.describe());
         try {
-            Map<Integer, WorkerService> activeWorkers = node.getBootstrap().getActiveWorkers();
-            List<WorkerService> workerList = new ArrayList<>(activeWorkers.values());
-            int n = workerList.size();
-            if (n == 0) {
-                throw new RemoteException("No active workers available to process job");
+            List<Map.Entry<Integer, WorkerService>> workers =
+                    new ArrayList<>(node.getBootstrap().getActiveWorkers().entrySet());
+            if (workers.isEmpty()) {
+                throw new RemoteException("No active workers available");
             }
 
-            List<Job<R>> parts = job.split(n);
+            List<Job<R>> parts = job.split(workers.size());
             List<Future<R>> futures = new ArrayList<>();
             for (int i = 0; i < parts.size(); i++) {
-                WorkerService w = workerList.get(i);
+                int workerId = workers.get(i).getKey();
+                WorkerService worker = workers.get(i).getValue();
                 Job<R> part = parts.get(i);
-                futures.add(dispatchPool.submit(() -> w.executeTask(part)));
+                election.recordAssignment(workerId);
+                Log.info(node.displayName(), "Assigned " + part.describe() + " to Worker-" + workerId);
+                futures.add(dispatchPool.submit(() -> worker.executeTask(part)));
             }
 
             List<R> partialResults = new ArrayList<>();
-            for (Future<R> f : futures) {
-                partialResults.add(f.get());
+            for (Future<R> future : futures) {
+                partialResults.add(future.get());
             }
             R result = job.combine(partialResults);
-            Log.info(node.displayName(), "Completed " + job.describe() + " = " + result);
+            Log.info(node.displayName(), "Completed " + job.describe() + " = " + result
+                    + " (JAC now " + election.getJac() + ")");
             return new JobResult(job.getName(), result, parts.size(), node.getId());
 
         } catch (InterruptedException e) {
@@ -70,6 +71,8 @@ public class JobCoordinator {
             throw new RemoteException("Job interrupted: " + job.describe(), e);
         } catch (ExecutionException e) {
             throw new RemoteException("Job failed: " + e.getCause().getMessage(), e.getCause());
+        } finally {
+            election.finishTermJob(jobNo);
         }
     }
 
