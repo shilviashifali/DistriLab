@@ -1,8 +1,8 @@
 package worker;
 
 import common.*;
-import jobs.JobProcessor; 
-import jobs.WorkerJobHandler;
+import jobs.TaskExecutor;
+import java.io.Serializable;
 import java.rmi.NoSuchObjectException;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
@@ -30,10 +30,11 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
     private volatile int jobsAssigned = 0;
 
     private final Set<String> processedElections = ConcurrentHashMap.newKeySet();
-    private final Set<String> processedCoordinators = ConcurrentHashMap.newKeySet(); 
-    private final WorkerJobHandler jobHandler = new WorkerJobHandler(); 
-    private final ExecutorService dispatchPool = Executors.newFixedThreadPool(10);
-   
+    private final Set<String> processedCoordinators = ConcurrentHashMap.newKeySet();
+
+    // ---------- Person 3: job execution support ----------
+    private final TaskExecutor taskExecutor = new TaskExecutor(4);
+    private final JobCoordinator jobCoordinator = new JobCoordinator(this);
 
 
     public WorkerNode(BootstrapService bootstrap) throws RemoteException {
@@ -128,8 +129,6 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
     }
 
     this.coordinatorId = bestId;
-    
-    bootstrap.setCoordinator(bestId);
 
     Log.info(name(), "Coordinator elected: Worker-" + bestId);
 
@@ -178,106 +177,21 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
         }
     }
 
-        @Override
+    @Override
     public Set<Integer> getNeighbourIds() {
         return new HashSet<>(neighbours.keySet());
     }
 
     // ---------- Person 3: job execution methods ----------
 
-    // Executes one chunk of a MAX job, ON this worker. Runs on the
-    // worker's thread pool so several incoming chunks (from possibly
-    // different job requests) can be processed concurrently.
     @Override
-    public int runMaxChunk(List<Integer> numbers) throws RemoteException {
-        try {
-            return jobHandler.submitMaxJob(numbers).get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RemoteException("MAX chunk failed on Worker-" + id + ": " + e.getMessage(), e);
-        }
-    }
-    @Override
-    public long runPrimeSumChunk(int start, int end) throws RemoteException {
-        try {
-            return jobHandler.submitPrimeSumJob(start, end).get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RemoteException("PRIMESUM chunk failed on Worker-" + id + ": " + e.getMessage(), e);
-        }
+    public <R extends Serializable> R executeTask(Job<R> job) throws RemoteException {
+        return taskExecutor.run(job);
     }
 
     @Override
-    public int runPrimeCountChunk(List<Integer> numbers) throws RemoteException {
-        try {
-            return jobHandler.submitPrimeCountJob(numbers).get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RemoteException("PRIMECOUNT chunk failed on Worker-" + id + ": " + e.getMessage(), e);
-        }
-    }
-
-    // Entry point called BY the Client. Only meaningful when THIS worker
-    // is the currently elected coordinator - splits the job across all
-    // active workers, dispatches chunks concurrently, and combines results.
-    @Override
-    public JobResult submitJob(JobRequest request) throws RemoteException {
-        if (id != coordinatorId) {
-            throw new RemoteException("Worker-" + id + " is not the coordinator "
-                    + "(current coordinator: Worker-" + coordinatorId + ")");
-        }
-
-        recordJobAssignment(); // counts toward this term's 5-job limit
-
-        Map<Integer, WorkerService> activeWorkers = bootstrap.getActiveWorkers();
-        List<WorkerService> workerList = new ArrayList<>(activeWorkers.values());
-        int n = workerList.size();
-        if (n == 0) {
-            throw new RemoteException("No active workers available to process job");
-        }
-
-        try {
-            switch (request.getType()) {
-                case MAX: {
-                    List<List<Integer>> chunks = JobProcessor.divideList(request.getNumbers(), n);
-                    List<Future<Integer>> futures = new ArrayList<>();
-                    for (int i = 0; i < chunks.size(); i++) {
-                        WorkerService w = workerList.get(i);
-                        List<Integer> chunk = chunks.get(i);
-                        futures.add(dispatchPool.submit(() -> w.runMaxChunk(chunk)));
-                    }
-                    List<Integer> partials = new ArrayList<>();
-                    for (Future<Integer> f : futures) partials.add(f.get());
-                    return new JobResult(JobRequest.JobType.MAX, JobProcessor.combineMax(partials));
-                }
-                case PRIMESUM: {
-                    List<int[]> chunks = JobProcessor.divideRange(
-                            request.getRangeStart(), request.getRangeEnd(), n);
-                    List<Future<Long>> futures = new ArrayList<>();
-                    for (int i = 0; i < chunks.size(); i++) {
-                        WorkerService w = workerList.get(i);
-                        int[] chunk = chunks.get(i);
-                        futures.add(dispatchPool.submit(() -> w.runPrimeSumChunk(chunk[0], chunk[1])));
-                    }
-                    List<Long> partials = new ArrayList<>();
-                    for (Future<Long> f : futures) partials.add(f.get());
-                    return new JobResult(JobRequest.JobType.PRIMESUM, JobProcessor.combinePrimeSum(partials));
-                }
-                case PRIMECOUNT: {
-                    List<List<Integer>> chunks = JobProcessor.divideList(request.getNumbers(), n);
-                    List<Future<Integer>> futures = new ArrayList<>();
-                    for (int i = 0; i < chunks.size(); i++) {
-                        WorkerService w = workerList.get(i);
-                        List<Integer> chunk = chunks.get(i);
-                        futures.add(dispatchPool.submit(() -> w.runPrimeCountChunk(chunk)));
-                    }
-                    List<Integer> partials = new ArrayList<>();
-                    for (Future<Integer> f : futures) partials.add(f.get());
-                    return new JobResult(JobRequest.JobType.PRIMECOUNT, JobProcessor.combinePrimeCount(partials));
-                }
-                default:
-                    throw new RemoteException("Unknown job type: " + request.getType());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RemoteException("Job execution failed: " + e.getMessage(), e);
-        }
+    public JobResult submitJob(Job<?> job) throws RemoteException {
+        return jobCoordinator.submit(job);
     }
 
     // ---------- Local accessors for Person 2 & 3 ----------
@@ -288,6 +202,10 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
 
     public BootstrapService getBootstrap() {
         return bootstrap;
+    }
+
+    String displayName() {
+        return name();
     }
 
     // ---------- Lifecycle ----------
@@ -343,7 +261,8 @@ public class WorkerNode extends UnicastRemoteObject implements WorkerService {
             return;
         }
         heartbeat.shutdownNow();
-        dispatchPool.shutdownNow();
+        taskExecutor.shutdown();
+        jobCoordinator.shutdown();
         for (WorkerService n : neighbours.values()) {
             try {
                 n.removeNeighbour(id);

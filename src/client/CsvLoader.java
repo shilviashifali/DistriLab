@@ -1,57 +1,39 @@
 package client;
 
 import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * CsvLoader reads a list of numbers from a CSV file, so the user can
- * load data instead of typing it manually into the GUI.
- *
- * Supports two common CSV layouts:
- *   1) All numbers on one line, comma-separated: 4,19,7,42,3,15
- *   2) One number per line:
- *        4
- *        19
- *        7
- * Both are handled automatically - it just splits on commas AND newlines.
+ * Reads whole numbers from a CSV file. Accepts comma-separated values,
+ * one value per line, or a mix. Non-numeric values (e.g. headers) are
+ * collected in {@code skipped} so the GUI can report them.
  */
-public class CsvLoader {
+public final class CsvLoader {
 
-    /**
-     * Reads all valid integers from the given CSV file path.
-     * Skips empty lines and anything that isn't a whole number
-     * (so a header row like "value" won't crash the whole load -
-     * it just gets skipped, and a warning is printed).
-     */
-    public static List<Integer> loadNumbersFromCsv(String filePath) throws IOException {
+    private CsvLoader() {}
+
+    public static List<Integer> load(File file, List<String> skipped) throws IOException {
         List<Integer> numbers = new ArrayList<>();
-
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = Files.newBufferedReader(file.toPath())) {
             String line;
             while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-
-                // handle comma-separated values on a single line
-                String[] parts = line.split(",");
-                for (String part : parts) {
-                    part = part.trim();
-                    if (part.isEmpty()) continue;
-
+                for (String part : line.split(",")) {
+                    String value = part.replace("\uFEFF", "").trim(); // remove Excel BOM
+                    if (value.isEmpty()) {
+                        continue;
+                    }
                     try {
-                        numbers.add(Integer.parseInt(part));
+                        numbers.add(Integer.parseInt(value));
                     } catch (NumberFormatException e) {
-                        // not a valid whole number (e.g. a header like "value")
-                        // skip it rather than crashing the whole load
-                        System.out.println("Skipping non-numeric value in CSV: \"" + part + "\"");
+                        skipped.add(value);
                     }
                 }
             }
         }
-
         return numbers;
     }
 }
